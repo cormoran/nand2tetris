@@ -1,0 +1,14 @@
+name: test
+
+on: [push]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v1
+      - name: project01
+        run: |
+          bash ./tools/HardwareSimulator.sh projects/demo/Xor.tst
+          bash ./tools/HardwareSimulator.sh projects/01/And.tst
