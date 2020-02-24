@@ -8,7 +8,7 @@ jobs:
 
     steps:
       - uses: actions/checkout@v1
+      - name: demo
+        run: bash ./tools/HardwareSimulator.sh projects/demo/Xor.tst
       - name: project01
-        run: |
-          bash ./tools/HardwareSimulator.sh projects/demo/Xor.tst
-          bash ./tools/HardwareSimulator.sh projects/01/And.tst
+        run: find projects/01 -name *.tst | xargs -t -L1 ./tools/HardwareSimulator.sh
