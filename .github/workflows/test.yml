@@ -14,3 +14,5 @@ jobs:
         run: find projects/01 -name *.tst | xargs -t -L1 ./tools/HardwareSimulator.sh
       - name: project02
         run: find projects/02 -name *.tst | xargs -t -L1 ./tools/HardwareSimulator.sh
+      - name: project03
+        run: find projects/03 -name *.tst | xargs -t -L1 ./tools/HardwareSimulator.sh
