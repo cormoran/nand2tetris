@@ -16,3 +16,5 @@ jobs:
         run: find projects/02 -name *.tst | xargs -t -L1 ./tools/HardwareSimulator.sh
       - name: project03
         run: find projects/03 -name *.tst | xargs -t -L1 ./tools/HardwareSimulator.sh
+      - name: project05
+        run: find projects/05 -name *.tst | grep -v Memory.tst | xargs -t -L1 ./tools/HardwareSimulator.sh
