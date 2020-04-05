@@ -103,7 +103,6 @@ public class Parser {
             Command result = new Command();
             result.symbol = parseSymbol();
             result.type = CommandType.A_COMMAND;
-            System.out.println(result.toString());
             return result;
         }
 
@@ -129,7 +128,6 @@ public class Parser {
             skipSpace(true);
             //
             result.type = CommandType.C_COMMAND;
-            System.out.println(result.toString());
             return result;
         }
 
@@ -141,12 +139,10 @@ public class Parser {
             assert nextHead == ')';
             nextHead = read();
             result.type = CommandType.L_COMMAND;
-            System.out.println(result.toString());
             return result;
         }
 
         private void parseComment() throws IOException {
-            System.out.println("Comment");
             assert nextHead == '/';
             assert read() == '/';
             do {
@@ -156,6 +152,7 @@ public class Parser {
 
         private String parseValue() throws IOException {
             StringBuffer buf = new StringBuffer();
+            assert isNumber(nextHead);
             while (isNumber(nextHead)) {
                 buf.append((char) nextHead);
                 nextHead = read();
@@ -184,62 +181,19 @@ public class Parser {
             StringBuffer buf = new StringBuffer();
             assert (isUnaryOperator(nextHead) || canUseAsSymbolHead(nextHead) || isNumber(nextHead));
             do {
-                buf.append((char) nextHead);
+                if (!isSpace(nextHead))
+                    buf.append((char) nextHead);
                 nextHead = read();
             } while (isBinaryOperator(nextHead) || isUnaryOperator(nextHead) || canUseAsSymbol(nextHead)
-                    || isNumber(nextHead));
-            return buf.toString();
-        }
-
-        private String parseDest() throws IOException {
-            if (isNumber(nextHead))
-                return parseValue();
-            return parseSymbol();
-        }
-
-        private String parseComp() throws IOException {
-            StringBuffer buf = new StringBuffer();
-            if (nextHead == '0' || nextHead == '1') {
-                buf.append((char) nextHead);
-                nextHead = read();
-                return buf.toString();
-            } else if (nextHead == '-') {
-                buf.append((char) nextHead);
-                nextHead = read();
-                if (nextHead == '1') {
-                    buf.append((char) nextHead);
-                    nextHead = read();
-                } else {
-                    buf.append(parseSymbol());
-                }
-            } else if (nextHead == '!') {
-                buf.append((char) nextHead);
-                nextHead = read();
-                buf.append(parseSymbol());
-            } else {
-                // D [op] A
-                buf.append(parseSymbol());
-                skipSpace(true);
-                if (isBinaryOperator(nextHead)) {
-                    buf.append((char) nextHead);
-                    nextHead = read();
-                    skipSpace(true);
-                    if (nextHead == '1') {
-                        buf.append((char) nextHead);
-                        nextHead = read();
-                    } else {
-                        buf.append(parseSymbol());
-                    }
-                }
-            }
+                    || isNumber(nextHead) || isSpace(nextHead));
             return buf.toString();
         }
 
         private void skipSpace(boolean allowEmpty) throws IOException {
-            if (nextHead == ' ' || nextHead == '\t') {
+            if (isSpace(nextHead)) {
                 do {
                     nextHead = read();
-                } while (nextHead == ' ' || nextHead == '\t');
+                } while (isSpace(nextHead));
             } else
                 assert allowEmpty;
         }
@@ -263,6 +217,21 @@ public class Parser {
         private boolean isUnaryOperator(int c) {
             return c == '-' || c == '!';
         }
+
+        private boolean isSpace(int c) {
+            return c == ' ' || c == '\t';
+        }
+
+        public boolean isValue(String symbol) {
+            boolean res = true;
+            for (char c : symbol.toCharArray())
+                res &= isNumber(c);
+            return res;
+        }
+    }
+
+    public boolean isValue(String symbol) {
+        return parser.isValue(symbol);
     }
 
 }
