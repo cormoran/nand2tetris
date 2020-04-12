@@ -47,8 +47,8 @@ public class CodeWriter {
                 this.write("D=M"); // arg1
                 this.write("@SP");
                 this.write("M=M-1"); // SP=*SP-1
-                this.write("A=M");
-                this.write(String.format("D=D%sM", code)); // D=arg1+arg2
+                this.write("A=M"); // arg2
+                this.write(String.format("D=M%sD", code)); // D=arg1+arg2
                 this.write("@SP");
                 this.write("A=M");
                 this.write("M=D");
@@ -66,7 +66,7 @@ public class CodeWriter {
                 this.write("@SP");
                 this.write("M=M-1"); // SP=*SP-1
                 this.write("A=M");
-                int l1 = this.write("D=D-M");
+                int l1 = this.write("D=M-D");
                 this.write(String.format("@%d", l1 + 12));
                 this.write(String.format("D; %s", code));
                 // false
@@ -80,8 +80,8 @@ public class CodeWriter {
                 this.write(String.format("@%d", l2 + 10));
                 this.write("0;JMP");
                 // true
-                this.write("@true");
-                this.write("D=A");
+                this.write("@0");
+                this.write("D=A-1");
                 this.write("@SP");
                 this.write("A=M");
                 this.write("M=D");
@@ -92,11 +92,8 @@ public class CodeWriter {
             case "not":
                 code = command.equals("neg") ? "-" : "!";
                 this.write("@SP");
-                this.write("M=M-1"); // SP=*SP-1
-                this.write("A=M"); // A=*SP
+                this.write("A=M-1"); // A=*SP
                 this.write(String.format("M=%sM", code)); // !arg1
-                this.write("@SP");
-                this.write("M=M+1");
                 break;
             default:
                 assert false;
