@@ -20,3 +20,5 @@ jobs:
         run: find projects/05 -name *.tst | grep -v Memory.tst | xargs -t -L1 ./tools/HardwareSimulator.sh
       - name: project06
         run: bash projects/06/check.sh
+      - name: project07
+        run: bash projects/07/check.sh

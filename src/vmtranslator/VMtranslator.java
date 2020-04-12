@@ -3,6 +3,7 @@ package src.vmtranslator;
 import java.io.FileNotFoundException;
 import java.io.FileReader;
 import java.io.FileWriter;
+import java.io.File;
 import java.io.IOException;
 
 import jdk.nashorn.internal.runtime.ParserException;
@@ -15,7 +16,7 @@ class VMTranslator {
         System.out.println("* output file: " + outFileName);
 
         Parser parser = new Parser(new FileReader(args[0]));
-        CodeWriter writer = new CodeWriter(new FileWriter(outFileName));
+        CodeWriter writer = new CodeWriter(new FileWriter(outFileName), new File(outFileName).getName());
         while (parser.hasMoreCommands()) {
             parser.advance();
             CommandType cType = parser.commandType();
