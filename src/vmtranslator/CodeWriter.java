@@ -14,7 +14,6 @@ public class CodeWriter {
         this.filename = filename;
         this.out = out;
         this.lineNumber = 0;
-        // this.writeInit();
     }
 
     public void close() throws IOException {
@@ -30,7 +29,7 @@ public class CodeWriter {
         return this.lineNumber++;
     }
 
-    private void writeInit() throws IOException {
+    public void writeInit() throws IOException {
         // SP
         this.write("@256");
         this.write("D=A");
@@ -229,6 +228,37 @@ public class CodeWriter {
             default:
                 assert false;
         }
+
+    }
+
+    public void writeLabel(String label) throws IOException {
+        // TODO: validate label string
+        this.write(String.format("(%s)", label));
+    }
+
+    public void writeGoto(String label) throws IOException {
+        this.write(String.format("@%s", label));
+        this.write("0;JMP");
+    }
+
+    public void writeIf(String label) throws IOException {
+        this.write("@SP");
+        this.write("M=M-1");
+        this.write("A=M");
+        this.write("D=M");
+        this.write(String.format("@%s", label));
+        this.write("D;JNE");
+    }
+
+    public void writeCall(String functionName, int numArgs) {
+        
+    }
+
+    public void writeReturn() {
+
+    }
+
+    public void writeFunction(String functionName, int numLocals) {
 
     }
 }

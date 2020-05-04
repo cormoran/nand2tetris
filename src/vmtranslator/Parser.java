@@ -203,7 +203,7 @@ public class Parser {
         }
 
         private boolean canUseAsSymbolHead(int c) {
-            return ('a' <= c && c <= 'z') || ('A' <= c && c <= 'Z') || c == '_' || c == '.' || c == '$' || c == ':';
+            return ('a' <= c && c <= 'z') || ('A' <= c && c <= 'Z') || c == '_' || c == '.' || c == '$' || c == ':' || c == '-'; // TODO: '-' は if-goto デノミ使える
         }
 
         private boolean canUseAsSymbol(int c) {
