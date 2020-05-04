@@ -2,6 +2,7 @@ package src.vmtranslator;
 
 import java.io.IOException;
 import java.io.Writer;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 
@@ -9,23 +10,25 @@ public class CodeWriter {
     String filename;
     Writer out;
     int lineNumber;
+    int callCnt;
 
-    public CodeWriter(Writer out, String filename) throws IOException {
-        this.filename = filename;
+    public CodeWriter(Writer out) throws IOException {        
         this.out = out;
         this.lineNumber = 0;
+        this.callCnt = 0;
     }
 
     public void close() throws IOException {
         this.out.close();
     }
 
-    // public void setFileName(String fileName) {
-
-    // }
+    public void setFileName(String fileName) throws IOException {
+        this.filename = fileName;
+        this.write(String.format("// %s", fileName));
+    }
     private int write(String line) throws IOException {
         this.out.write(line);
-        this.out.write("\n");
+        this.out.write("\n");        
         return this.lineNumber++;
     }
 
@@ -35,13 +38,18 @@ public class CodeWriter {
         this.write("D=A");
         this.write("@SP");
         this.write("M=D");
-        // local, argument, this, that
-        this.write("@2048");
+
+        this.write("@256");
         this.write("D=A");
-        this.write("@LCL");
+        this.write("@THIS");
         this.write("M=D");
-        this.write("@ARG");
+
+        this.write("@256");
+        this.write("D=A");
+        this.write("@THAT");
         this.write("M=D");
+                
+        this.writeCall("Sys.init", 0);
     }
 
     public void writeArithmetic(String command) throws IOException {
@@ -77,8 +85,8 @@ public class CodeWriter {
                 this.write("@SP");
                 this.write("M=M-1"); // SP=*SP-1
                 this.write("A=M");
-                int l1 = this.write("D=M-D");
-                this.write(String.format("@%d", l1 + 12));
+                this.write("D=M-D");
+                this.write(String.format("@__JUMP_TRUE_%d__", callCnt));
                 this.write(String.format("D; %s", code));
                 // false
                 this.write("@0");
@@ -87,10 +95,11 @@ public class CodeWriter {
                 this.write("A=M");
                 this.write("M=D");
                 this.write("@SP");
-                int l2 = this.write("M=M+1");
-                this.write(String.format("@%d", l2 + 10));
+                this.write("M=M+1");
+                this.write(String.format("@__JUMP_END_%d__", callCnt));
                 this.write("0;JMP");
                 // true
+                this.write(String.format("(__JUMP_TRUE_%d__)", callCnt));
                 this.write("@0");
                 this.write("D=A-1");
                 this.write("@SP");
@@ -98,6 +107,7 @@ public class CodeWriter {
                 this.write("M=D");
                 this.write("@SP");
                 this.write("M=M+1");
+                this.write(String.format("(__JUMP_END_%d__)", callCnt++));
                 break;
             case "neg":
             case "not":
@@ -128,6 +138,8 @@ public class CodeWriter {
                     case C_POP:
                         assert false;
                         break;
+                    default:
+                        assert false;
                 }
                 break;
             case "pointer":
@@ -223,6 +235,8 @@ public class CodeWriter {
                         this.write("M=D");
                         this.write("@SP");
                         break;
+                    default:
+                        assert false;
                 }
                 break;
             default:
@@ -250,15 +264,97 @@ public class CodeWriter {
         this.write("D;JNE");
     }
 
-    public void writeCall(String functionName, int numArgs) {
+    public void writeCall(String functionName, int numArgs) throws IOException {
+        String returnAddress = String.format("__RETURN__%s__", callCnt++);
+        // save state
+        this.write(String.format("@%s", returnAddress));
+        this.write("D=A");
+        this.write("@SP");
+        this.write("A=M");
+        this.write("M=D");
+        this.write("@SP");
+        this.write("M=M+1");
+
+        for (String key : new String[] {"LCL", "ARG", "THIS", "THAT" }) {
+            this.write(String.format("@%s", key));            
+            this.write("D=M");
+            this.write("@SP");
+            this.write("A=M");
+            this.write("M=D");
+            this.write("@SP");
+            this.write("M=M+1");
+        }
+        // set arg
+        this.write("@SP");
+        this.write("D=M");
+        this.write("@5");
+        this.write("D=D-A");
+        this.write(String.format("@%d", numArgs));
+        this.write("D=D-A");
+        this.write("@ARG");
+        this.write("M=D");
+        // set lcl
+        this.write("@SP");
+        this.write("D=M");
+        this.write("@LCL");
+        this.write("M=D");        
+        // go
+        this.write(String.format("@%s", functionName));
+        this.write("0; JMP");
+        this.write(String.format("(%s)", returnAddress));
+    }
+
+    public void writeReturn() throws IOException {
+        this.write("@LCL");
+        this.write("D=M");
+        this.write("@FRAME");
+        this.write("M=D");
+
+        // backup return address (may be overriten when set ret val)
+        this.write("@FRAME");
+        this.write("D=M");
+        this.write("@5");
+        this.write("A=D-A");
+        this.write("D=M");
+        this.write("@RET");
+        this.write("M=D");
+
+        // set ret val
+        this.write("@SP");
+        this.write("M=M-1");        
+        this.write("A=M");
+        this.write("D=M"); // D = return
+        this.write("@ARG");
+        this.write("A=M");
+        this.write("M=D"); // *ARG = return
+        // set sp
+        this.write("@ARG");        
+        this.write("D=M+1");
+        this.write("@SP");
+        this.write("M=D");
+        //         
         
+        for (String key : new String[] { "THAT", "THIS", "ARG", "LCL"}) {
+            this.write("@FRAME");
+            this.write("M=M-1");
+            this.write("A=M");
+            this.write("D=M");
+            this.write(String.format("@%s", key));
+            this.write("M=D");            
+        }
+        this.write("@RET");    
+        this.write("A=M");
+        this.write("0; JMP");        
     }
 
-    public void writeReturn() {
-
-    }
-
-    public void writeFunction(String functionName, int numLocals) {
-
+    public void writeFunction(String functionName, int numLocals) throws IOException {
+        this.write(String.format("(%s)", functionName));
+        for (int i = 0; i < numLocals; i++) { // set 0
+            this.write("@SP");
+            this.write("A=M");
+            this.write("M=0");
+            this.write("@SP");
+            this.write("M=M+1");
+        }
     }
 }
