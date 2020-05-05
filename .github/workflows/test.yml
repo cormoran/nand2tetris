@@ -24,3 +24,5 @@ jobs:
         run: bash projects/07/check.sh
       - name: project08
         run: bash projects/08/check.sh
+      - name: project10
+        run: bash projects/10/check.sh
