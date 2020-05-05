@@ -6,11 +6,11 @@ import java.io.IOException;
 
 public class Analyzer {
     Tokenizer tokenizer;
-    CompliationEngline engine;
+    CompliationEngine engine;
 
     Analyzer(String inputFilePath, String outFilePath) throws IOException {
         // tokenizer = new Tokenizer()
-        // engine = new CompliationEngline(in, out)
+        // engine = new CompliationEngine(in, out)
     }
 
     public static void main(String[] args) throws FileNotFoundException, IOException {

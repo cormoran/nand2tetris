@@ -16,38 +16,13 @@ public class Tokenizer {
 
         writer.write("<tokens>\n");
         while (true) {
+
             TokenType type = tokenizer.advance();
             if (type == null)
                 break;
-            switch (type) {
-                case KEYWORD:
-                    writer.write("\t<keyword> ");
-                    writer.write(tokenizer.keyWord().toString().toLowerCase());
-                    writer.write(" </keyword>\n");
-                    break;
-                case SYMBOL:
-                    writer.write("\t<symbol> ");
-                    writer.write(tokenizer.symbol().replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"));
-                    writer.write(" </symbol>\n");
-                    break;
-                case INT_CONST:
-                    writer.write("\t<integerConstant> ");
-                    writer.write(Integer.valueOf(tokenizer.intVal()).toString());
-                    writer.write(" </integerConstant>\n");
-                    break;
-                case STRING_CONST:
-                    writer.write("\t<stringConstant> ");
-                    writer.write(tokenizer.stringVal());
-                    writer.write(" </stringConstant>\n");
-                    break;
-                case IDENTIFIER:
-                    writer.write("\t<identifier> ");
-                    writer.write(tokenizer.identifier());
-                    writer.write(" </identifier>\n");
-                    break;
-                default:
-                    assert false;
-            }
+            writer.write("\t");
+            writer.write(tokenizer.getCurrentAsXML());
+            writer.write("\n");
         }
         writer.write("</tokens>\n");
         writer.close();
@@ -148,6 +123,43 @@ public class Tokenizer {
 
     public String stringVal() {
         return currentString;
+    }
+
+    public String getCurrentAsXML() {
+        TokenType type = currentType;
+        if (type == null)
+            assert false;
+        StringBuffer buf = new StringBuffer();
+        switch (type) {
+            case KEYWORD:
+                buf.append("<keyword> ");
+                buf.append(keyWord().toString().toLowerCase());
+                buf.append(" </keyword>");
+                break;
+            case SYMBOL:
+                buf.append("<symbol> ");
+                buf.append(symbol().replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"));
+                buf.append(" </symbol>");
+                break;
+            case INT_CONST:
+                buf.append("<integerConstant> ");
+                buf.append(Integer.valueOf(intVal()).toString());
+                buf.append(" </integerConstant>");
+                break;
+            case STRING_CONST:
+                buf.append("<stringConstant> ");
+                buf.append(stringVal());
+                buf.append(" </stringConstant>");
+                break;
+            case IDENTIFIER:
+                buf.append("<identifier> ");
+                buf.append(identifier());
+                buf.append(" </identifier>");
+                break;
+            default:
+                assert false;
+        }
+        return buf.toString();
     }
 
     private int read() throws IOException {
