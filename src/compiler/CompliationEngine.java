@@ -1,15 +1,26 @@
 package src.compiler;
 
+import java.io.ByteArrayInputStream;
 import java.io.FileReader;
 import java.io.FileWriter;
-import java.io.IOException;
+import java.io.InputStream;
 import java.io.Reader;
+import java.io.StringBufferInputStream;
 import java.io.Writer;
 import java.util.ArrayList;
+import java.util.Map;
 import java.util.Stack;
 
+import javax.xml.parsers.DocumentBuilder;
+import javax.xml.parsers.DocumentBuilderFactory;
+import org.w3c.dom.Document;
+import org.w3c.dom.Element;
+import org.w3c.dom.Node;
+import org.w3c.dom.NodeList;
+
 public class CompliationEngine {
-    public static void main(String[] args) throws IOException {
+
+    public static void main(String[] args) throws Exception {
         assert args.length == 1;
         String outFileName = args[0].replace(".jack", ".gen.xml");
 
@@ -21,30 +32,41 @@ public class CompliationEngine {
     Tokenizer tokenizer;
     Writer out;
     ArrayList<String> buffer;
+    SymbolTable symbolTable;
+    VMWriter vmwriter;
 
-    CompliationEngine(Reader in, Writer out) throws IOException {
+    CompliationEngine(Reader in, Writer out) throws Exception {
         tokenizer = new Tokenizer(in);
         tokenizer.advance();
         this.out = out;
         this.buffer = new ArrayList<String>();
+        this.symbolTable = new SymbolTable();
+        this.vmwriter = new VMWriter();
     }
 
-    private void write() throws IOException {
+    private String getXml() {
+        StringBuilder builder = new StringBuilder();
         int depth = 0;
         for (String s : buffer) {
             if (s.startsWith("</"))
                 depth--;
             for (int i = 0; i < depth; i++)
-                out.write("\t");
+                builder.append("\t");
             if (s.startsWith("!")) {
-                out.write(s.substring(1));
+                builder.append(s.substring(1));
             } else {
-                out.write(s);
+                builder.append(s);
             }
-            out.write("\n");
+            builder.append("\n");
             if (!s.startsWith("</") && s.startsWith("<"))
                 depth++;
         }
+        return builder.toString();
+    }
+
+    private void write() throws Exception {
+        String xml = getXml();
+        out.write(xml);
         out.close();
     }
 
@@ -58,167 +80,300 @@ public class CompliationEngine {
         return false;
     }
 
-    public boolean compileClass() throws IOException {
+    private <T> T ensure(T val) {
+        assert val != null;
+        return val;
+    }
+
+    // ------------------------------------------------------------------------------------
+
+    public boolean compileClass() throws Exception {
         pushStack("<class>");
-        if (!compileKeyWord(KeyWord.CLASS))
+        if (compileKeyWord(KeyWord.CLASS) == null)
             return popStack();
-        assert compileIdentifier();
-        assert compileSymbol("{");
+        String className = ensure(compileIdentifier());
+        assert compileSymbol("{") != null;
+
         while (compileClassVarDec())
             ;
-        while (compileSubroutineDec())
+        while (compileSubroutineDec(className))
             ;
-        assert compileSymbol("}");
+        assert compileSymbol("}") != null;
+
         return pushStack("</class>");
     }
 
-    public boolean compileClassVarDec() throws IOException {
+    // OK
+    public boolean compileClassVarDec() throws Exception {
         pushStack("<classVarDec>");
-        if (!compileKeyWord(KeyWord.STATIC, KeyWord.FIELD))
+        KeyWord kind = compileKeyWord(KeyWord.STATIC, KeyWord.FIELD);
+        if (kind == null)
             return popStack();
-        assert compileType();
-        assert compileVarName();
-        while (compileSymbol(",")) {
-            assert compileVarName();
+        String type = ensure(compileType());
+        String name = ensure(compileVarName());
+        symbolTable.define(name, type, kind == KeyWord.STATIC ? SymbolKind.STATIC : SymbolKind.FIELD);
+        while (compileSymbol(",") != null) {
+            name = ensure(compileVarName());
+            symbolTable.define(name, type, kind == KeyWord.STATIC ? SymbolKind.STATIC : SymbolKind.FIELD);
         }
-        assert compileSymbol(";");
+        assert compileSymbol(";") != null;
         return pushStack("</classVarDec>");
     }
 
-    public boolean compileSubroutineDec() throws IOException {
+    // OK
+    public boolean compileSubroutineDec(String className) throws Exception {
         pushStack("<subroutineDec>");
-        if (!compileKeyWord(KeyWord.CONSTRUCTOR, KeyWord.FUNCTION, KeyWord.METHOD))
+        if (compileKeyWord(KeyWord.CONSTRUCTOR, KeyWord.FUNCTION, KeyWord.METHOD) == null)
             return popStack();
-        assert compileKeyWord(KeyWord.VOID) || compileType();
-        assert compileSubroutineName();
-        assert compileSymbol("(");
+        symbolTable.startSubroutine();
+        assert compileKeyWord(KeyWord.VOID) != null || compileType() != null;
+        String subroutineName = ensure(compileSubroutineName());
+        assert compileSymbol("(") != null;
         assert compileParameterList();
-        assert compileSymbol(")");
-        assert compileSubroutineBody();
+        assert compileSymbol(")") != null;
+        assert compileSubroutineBody(className, subroutineName);
         return pushStack("</subroutineDec>");
     }
 
-    public boolean compileParameterList() throws IOException {
+    // OK
+    public boolean compileParameterList() throws Exception {
         pushStack("<parameterList>");
-        if (compileType()) {
-            assert compileVarName();
-            while (compileSymbol(",")) {
-                assert compileType();
-                assert compileVarName();
+        String type = compileType();
+        if (type != null) {
+            String name = ensure(compileVarName());
+            symbolTable.define(name, type, SymbolKind.ARG);
+            while (compileSymbol(",") != null) {
+                type = ensure(compileType());
+                name = ensure(compileVarName());
+                symbolTable.define(name, type, SymbolKind.ARG);
             }
         }
         return pushStack("</parameterList>");
     }
 
-    public boolean compileVarDec() throws IOException {
+    // OK
+    public boolean compileVarDec() throws Exception {
         pushStack("<varDec>");
-        if (!compileKeyWord(KeyWord.VAR))
+        if (compileKeyWord(KeyWord.VAR) == null)
             return popStack();
-        assert compileType();
-        assert compileVarName();
-        while (compileSymbol(",")) {
-            assert compileVarName();
+
+        String type = ensure(compileType());
+        String name = ensure(compileVarName());
+        symbolTable.define(name, type, SymbolKind.VAR);
+        while (compileSymbol(",") != null) {
+            name = ensure(compileVarName());
+            symbolTable.define(name, type, SymbolKind.VAR);
         }
-        assert compileSymbol(";");
+        assert compileSymbol(";") != null;
         return pushStack("</varDec>");
     }
 
-    public boolean compileStatements() throws IOException {
+    // OK
+    public boolean compileStatements() throws Exception {
         pushStack("<statements>");
         while (compileStatement())
             ;
         return pushStack("</statements>");
     }
 
-    public boolean compileDo() throws IOException {
+    // OK
+    public boolean compileDo() throws Exception {
         pushStack("<doStatement>");
-        if (!compileKeyWord(KeyWord.DO))
+        if (compileKeyWord(KeyWord.DO) == null)
             return popStack();
         assert compileSubroutineCall();
-        assert compileSymbol(";");
+        assert compileSymbol(";") != null;
         return pushStack("</doStatement>");
     }
 
-    public boolean compileLet() throws IOException {
+    // OK
+    public boolean compileLet() throws Exception {
         pushStack("<letStatement>");
-        if (!compileKeyWord(KeyWord.LET))
+        if (compileKeyWord(KeyWord.LET) == null)
             return popStack();
-        assert compileVarName();
-
-        if (compileSymbol("[")) {
+        String varName = ensure(compileVarName());
+        boolean isArray = false;
+        if (compileSymbol("[") != null) {
             assert compileExpression();
-            assert compileSymbol("]");
+            assert compileSymbol("]") != null;
+            isArray = true;
         }
-        assert compileSymbol("=");
+        assert compileSymbol("=") != null;
         assert compileExpression();
-        assert compileSymbol(";");
+        assert compileSymbol(";") != null;
+
+        if (isArray) {
+            switch (symbolTable.kindOf(varName)) {
+                case STATIC:
+                    vmwriter.writePush(SegmentType.STATIC, symbolTable.indexOf(varName));
+                    break;
+                case FIELD:
+                    vmwriter.writePush(SegmentType.THIS, symbolTable.indexOf(varName));
+                    break;
+                case ARG:
+                    assert false;
+                    break;
+                case VAR:
+                    vmwriter.writePush(SegmentType.LOCAL, symbolTable.indexOf(varName));
+                    break;
+                default:
+                    assert false;
+            }
+            vmwriter.writeArithmetic(CommandType.ADD); // base + index
+            vmwriter.writePop(SegmentType.POINTER, 1); // set that
+            vmwriter.writePop(SegmentType.THAT, 0);
+        } else {
+            switch (symbolTable.kindOf(varName)) {
+                case STATIC:
+                    vmwriter.writePop(SegmentType.STATIC, symbolTable.indexOf(varName));
+                    break;
+                case FIELD:
+                    vmwriter.writePop(SegmentType.THIS, symbolTable.indexOf(varName));
+                    break;
+                case ARG:
+                    assert false;
+                    break;
+                case VAR:
+                    vmwriter.writePop(SegmentType.LOCAL, symbolTable.indexOf(varName));
+                    break;
+                default:
+                    assert false;
+            }
+        }
         return pushStack("</letStatement>");
     }
 
-    public boolean compileWhile() throws IOException {
+    // OK
+    public boolean compileWhile() throws Exception {
         pushStack("<whileStatement>");
-        if (!compileKeyWord(KeyWord.WHILE))
+        if (compileKeyWord(KeyWord.WHILE) == null)
             return popStack();
-        assert compileSymbol("(");
+        vmwriter.writeLabel("TODO: while start");
+        assert compileSymbol("(") != null;
         assert compileExpression();
-        assert compileSymbol(")");
-        assert compileSymbol("{");
+        assert compileSymbol(")") != null;
+        vmwriter.writeIf("TODO: while end");
+        assert compileSymbol("{") != null;
         assert compileStatements();
-        assert compileSymbol("}");
+        assert compileSymbol("}") != null;
+        vmwriter.writeGoto("TODO: while start");
+        vmwriter.writeLabel("TODO: while end");
         return pushStack("</whileStatement>");
     }
 
-    public boolean compileReturn() throws IOException {
+    // OK
+    public boolean compileReturn() throws Exception {
         pushStack("<returnStatement>");
-        if (!compileKeyWord(KeyWord.RETURN))
+        if (compileKeyWord(KeyWord.RETURN) == null)
             return popStack();
-        compileExpression(); // allow fail
-        assert compileSymbol(";");
+        boolean isVoidReturn = !compileExpression();
+        assert compileSymbol(";") != null;
+        if (isVoidReturn)
+            vmwriter.writePush(SegmentType.CONST, 0);
+        vmwriter.writeReturn();
         return pushStack("</returnStatement>");
     }
 
-    public boolean compileIf() throws IOException {
+    // OK
+    public boolean compileIf() throws Exception {
         pushStack("<ifStatement>");
-        if (!compileKeyWord(KeyWord.IF))
+        if (compileKeyWord(KeyWord.IF) == null)
             return popStack();
-        assert compileSymbol("(");
+        assert compileSymbol("(") != null;
         assert compileExpression();
-        assert compileSymbol(")");
-        assert compileSymbol("{");
+        assert compileSymbol(")") != null;
+        vmwriter.writeIf("TODO: else label");
+        assert compileSymbol("{") != null;
         assert compileStatements();
-        assert compileSymbol("}");
-        if (compileKeyWord(KeyWord.ELSE)) {
-            assert compileSymbol("{");
+        assert compileSymbol("}") != null;
+        vmwriter.writeGoto("TODO: end lable");
+        vmwriter.writeLabel("TODO: else label");
+        if (compileKeyWord(KeyWord.ELSE) != null) {
+            assert compileSymbol("{") != null;
             assert compileStatements();
-            assert compileSymbol("}");
+            assert compileSymbol("}") != null;
         }
+        vmwriter.writeLabel("TODO: end label");
         return pushStack("</ifStatement>");
     }
 
-    public boolean compileExpression() throws IOException {
+    // OK
+    public boolean compileExpression() throws Exception {
         pushStack("<expression>");
         if (!compileTerm())
             return popStack();
-        while (compileOp()) {
+        String op = compileOp();
+        while (op != null) {
             assert compileTerm();
+            switch (op) {
+                // +-*/&|<>=
+                case "+":
+                    vmwriter.writeArithmetic(CommandType.ADD);
+                    break;
+                case "-":
+                    vmwriter.writeArithmetic(CommandType.SUB);
+                    break;
+                case "*":
+                    // TODO: call mult
+                    break;
+                case "/":
+                    // TODO: call div
+                    break;
+                case "&":
+                    vmwriter.writeArithmetic(CommandType.AND);
+                    break;
+                case "|":
+                    vmwriter.writeArithmetic(CommandType.OR);
+                    break;
+                case "<":
+                    vmwriter.writeArithmetic(CommandType.LT); // TODO: OK?
+                    break;
+                case ">":
+                    vmwriter.writeArithmetic(CommandType.GT); // TODO: OK?
+                    break;
+                case "=":
+                    vmwriter.writeArithmetic(CommandType.EQ); // TODO: OK?
+                    break;
+                default:
+                    assert false;
+            }
+            op = compileOp();
         }
         return pushStack("</expression>");
     }
 
-    public boolean compileTerm() throws IOException {
+    // OK
+    public boolean compileTerm() throws Exception {
         pushStack("<term>");
-        if (compileSymbol("(")) {
+        boolean ok = false;
+        if (compileSymbol("(") != null) {
             assert compileExpression();
-            assert compileSymbol(")");
-        } else if (compileUnaryOp()) {
-            assert compileTerm();
-        } else if (compileIntegerConstant()) {
-
-        } else if (compileStringConstant()) {
-
-        } else if (compileKeywordConstant()) {
-
-        } else if (compileIdentifier()) {
+            assert compileSymbol(")") != null;
+            ok = true;
+        }
+        if (!ok) {
+            String op = compileUnaryOp();
+            if (op != null) {
+                assert compileTerm();
+                switch (op) {
+                    case "-":
+                        vmwriter.writeArithmetic(CommandType.NEG);
+                        break;
+                    case "~":
+                        vmwriter.writeArithmetic(CommandType.NOT);
+                        break;
+                    default:
+                        assert false;
+                }
+                ok = true;
+            }
+        }
+        if (!ok) {
+            ok = compileIntegerConstant() || compileStringConstant() || compileKeywordConstant();
+        }
+        if (!ok) {
+            String name = compileIdentifier();
+            if (name != null) {
             // @formatter:off
             //
             // varName | (varName [ expression ]) | subroutinecall
@@ -231,139 +386,203 @@ public class CompliationEngine {
             // 4. (className | varName) . subroutineName ( expressionList )
             //
             // @formatter:on
-            if (compileSymbol("[")) { // 2
-                assert compileExpression();
-                assert compileSymbol("]");
-            } else if (compileSymbol("(")) { // 3
-                assert compileExpressionList();
-                assert compileSymbol(")");
-            } else if (compileSymbol(".")) { // 4
-                assert compileIdentifier(); // subroutineName
-                assert compileSymbol("(");
-                assert compileExpressionList();
-                assert compileSymbol(")");
-            } else {
-                // 1
+                if (compileSymbol("[") != null) { // 2
+                    assert compileExpression();
+                    assert compileSymbol("]") != null;
+
+                    SegmentType segment = ensure(symbolTable.kindOf(name) == SymbolKind.ARG ? SegmentType.ARG
+                            : symbolTable.kindOf(name) == SymbolKind.FIELD ? SegmentType.THIS
+                                    : symbolTable.kindOf(name) == SymbolKind.STATIC ? SegmentType.STATIC
+                                            : symbolTable.kindOf(name) == SymbolKind.VAR ? SegmentType.LOCAL : null);
+                    vmwriter.writePush(segment, symbolTable.indexOf(name));
+                    vmwriter.writeArithmetic(CommandType.ADD);
+                    vmwriter.writePop(SegmentType.POINTER, 1);
+                    vmwriter.writePush(SegmentType.THAT, 0);
+                } else if (compileSymbol("(") != null) { // 3
+                    int nArgs = compileExpressionList();
+                    assert compileSymbol(")") != null;
+                    vmwriter.writeCall(name, nArgs);
+                } else if (compileSymbol(".") != null) { // 4
+                    String name2 = ensure(compileIdentifier()); // subroutineName
+                    assert compileSymbol("(") != null;
+                    int nArgs = compileExpressionList();
+                    assert compileSymbol(")") != null;
+                    if (symbolTable.contains(name))
+                        vmwriter.writeCall(symbolTable.typeOf(name) + "." + name2, nArgs); // varName
+                    else
+                        vmwriter.writeCall(name + "." + name2, nArgs); // className
+                } else {
+                    SegmentType segment = ensure(symbolTable.kindOf(name) == SymbolKind.ARG ? SegmentType.ARG
+                            : symbolTable.kindOf(name) == SymbolKind.FIELD ? SegmentType.THIS
+                                    : symbolTable.kindOf(name) == SymbolKind.STATIC ? SegmentType.STATIC
+                                            : symbolTable.kindOf(name) == SymbolKind.VAR ? SegmentType.LOCAL : null);
+                    vmwriter.writePush(segment, symbolTable.indexOf(name));
+                    // 1
+                }
+                ok = true;
             }
-        } else
+        }
+        if (!ok)
             return popStack();
         return pushStack("</term>");
     }
 
-    public boolean compileExpressionList() throws IOException {
+    // OK
+    public int compileExpressionList() throws Exception {
+        int numExpression = 0;
         pushStack("<expressionList>");
         if (compileExpression()) {
-            while (compileSymbol(",")) {
+            numExpression++;
+            while (compileSymbol(",") != null) {
                 assert compileExpression();
+                numExpression++;
             }
         }
-        return pushStack("</expressionList>");
+        pushStack("</expressionList>");
+        return numExpression;
     }
 
-    //
-
-    private boolean compileStatement() throws IOException {
+    // OK
+    private boolean compileStatement() throws Exception {
         return compileLet() || compileIf() || compileWhile() || compileDo() || compileReturn();
     }
 
-    private boolean compileSubroutineCall() throws IOException {
-        if (!compileIdentifier())
+    // OK
+    private boolean compileSubroutineCall() throws Exception {
+        String name = compileIdentifier();
+        if (name == null)
             return false; // subroutineName, className or varName
-        if (compileSymbol(".")) {
-            assert compileSubroutineName(); // 1st identifier is className or varName
+        if (compileSymbol(".") != null) {
+            String subroutineName = ensure(compileSubroutineName()); // 1st identifier is className or varName
+            if (symbolTable.contains(name)) {
+                name = symbolTable.typeOf(name) + "." + subroutineName; // varName
+            } else {
+                name = name + "." + subroutineName; // className
+            }
         }
-        assert compileSymbol("(");
-        assert compileExpressionList();
-        assert compileSymbol(")");
+        assert compileSymbol("(") != null;
+        int nArgs = compileExpressionList();
+        assert compileSymbol(")") != null;
+        vmwriter.writeCall(name, nArgs);
         return true;
     }
 
-    private boolean compileSubroutineBody() throws IOException {
+    // OK
+    private boolean compileSubroutineBody(String className, String subroutineName) throws Exception {
         pushStack("<subroutineBody>");
-        if (!compileSymbol("{"))
+        if (compileSymbol("{") == null)
             return popStack();
         while (tokenizer.tokenType() == TokenType.KEYWORD && tokenizer.keyWord() == KeyWord.VAR) {
-            compileVarDec();
+            assert compileVarDec();
         }
+        vmwriter.writeFunction(className + "." + subroutineName, symbolTable.varCount(SymbolKind.VAR));
         compileStatements();
-        assert compileSymbol("}");
+        assert compileSymbol("}") != null;
         return pushStack("</subroutineBody>");
     }
 
-    private boolean compileType() throws IOException {
-        return compileKeyWord(KeyWord.INT, KeyWord.CHAR, KeyWord.BOOLEAN) || compileClassName();
+    // -------------------------------------------------------------------------------------------------
+
+    private String compileType() throws Exception {
+        KeyWord w = compileKeyWord(KeyWord.INT, KeyWord.CHAR, KeyWord.BOOLEAN);
+        if (w != null)
+            return w.toString();
+        return compileClassName();
     }
 
-    private boolean compileClassName() throws IOException {
+    private String compileClassName() throws Exception {
         return compileIdentifier();
     }
 
-    private boolean compileSubroutineName() throws IOException {
+    private String compileSubroutineName() throws Exception {
         return compileIdentifier();
     }
 
-    private boolean compileVarName() throws IOException {
+    private String compileVarName() throws Exception {
         return compileIdentifier();
     }
 
-    private boolean compileOp() throws IOException {
+    private String compileOp() throws Exception {
         return compileSymbol("+-*/&|<>=");
     }
 
-    private boolean compileUnaryOp() throws IOException {
+    private String compileUnaryOp() throws Exception {
         return compileSymbol("-~");
     }
 
-    private boolean compileKeywordConstant() throws IOException {
-        return compileKeyWord(KeyWord.TRUE, KeyWord.FALSE, KeyWord.NULL, KeyWord.THIS);
+    private boolean compileKeywordConstant() throws Exception {
+        KeyWord word = compileKeyWord(KeyWord.TRUE, KeyWord.FALSE, KeyWord.NULL, KeyWord.THIS);
+        if (word == null)
+            return false;
+        switch (word) {
+            case TRUE:
+                vmwriter.writePush(SegmentType.CONST, 1);
+                vmwriter.writeArithmetic(CommandType.NEG);
+                break;
+            case FALSE:
+            case NULL:
+                vmwriter.writePush(SegmentType.CONST, 0);
+                break;
+            case THIS:
+                vmwriter.writePush(SegmentType.POINTER, 0); // TODO: あってる？
+                break;
+            default:
+                assert false;
+        }
+        return true;
     }
 
-    private boolean compileKeyWord(KeyWord... availableKeywords) throws IOException {
+    private KeyWord compileKeyWord(KeyWord... availableKeywords) throws Exception {
         if (tokenizer.tokenType() != TokenType.KEYWORD)
-            return false;
+            return null;
         boolean ok = false;
         for (KeyWord key : availableKeywords) {
             ok |= key.equals(tokenizer.keyWord());
         }
         if (!ok)
-            return false;
-        pushStack("!<keyword> " + tokenizer.keyWord().toString().toLowerCase() + " </keyword>");
+            return null;
+        KeyWord res = tokenizer.keyWord();
+        pushStack("!<keyword> " + res.toString().toLowerCase() + " </keyword>");
         tokenizer.advance();
-        return true;
+        return res;
     }
 
-    private boolean compileSymbol(String availableSimbols) throws IOException {
+    private String compileSymbol(String availableSimbols) throws Exception {
         if (tokenizer.tokenType() != TokenType.SYMBOL)
-            return false;
+            return null;
         if (availableSimbols.indexOf(tokenizer.symbol()) < 0)
-            return false;
-        pushStack("!<symbol> " + tokenizer.symbol().replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-                + " </symbol>");
+            return null;
+        String res = tokenizer.symbol();
+        pushStack("!<symbol> " + res.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;") + " </symbol>");
         tokenizer.advance();
-        return true;
+        return res;
     }
 
-    private boolean compileIdentifier() throws IOException {
+    private String compileIdentifier() throws Exception {
         if (tokenizer.tokenType() != TokenType.IDENTIFIER)
-            return false;
-
-        pushStack("!<identifier> " + tokenizer.identifier() + " </identifier>");
+            return null;
+        String res = tokenizer.identifier();
+        pushStack("!<identifier> " + res + " </identifier>");
         tokenizer.advance();
-        return true;
+        return res;
     }
 
-    private boolean compileIntegerConstant() throws IOException {
+    private boolean compileIntegerConstant() throws Exception {
         if (tokenizer.tokenType() != TokenType.INT_CONST)
             return false;
-        pushStack("!<integerConstant> " + Integer.valueOf(tokenizer.intVal()).toString() + " </integerConstant>");
+        Integer res = tokenizer.intVal();
+        vmwriter.writePush(SegmentType.CONST, res);
+        pushStack("!<integerConstant> " + res.toString() + " </integerConstant>");
         tokenizer.advance();
         return true;
     }
 
-    private boolean compileStringConstant() throws IOException {
+    private boolean compileStringConstant() throws Exception {
         if (tokenizer.tokenType() != TokenType.STRING_CONST)
             return false;
-        pushStack("!<stringConstant> " + tokenizer.stringVal() + " </stringConstant>");
+        String res = tokenizer.stringVal();
+        vmwriter.writePush(SegmentType.CONST, 0); // TODO: push address of string constant
+        pushStack("!<stringConstant> " + res + " </stringConstant>");
         tokenizer.advance();
         return true;
     }
