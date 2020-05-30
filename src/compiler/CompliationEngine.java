@@ -10,6 +10,7 @@ import java.io.Writer;
 import java.util.ArrayList;
 import java.util.Map;
 import java.util.Stack;
+import java.util.UUID;
 
 import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
@@ -123,15 +124,44 @@ public class CompliationEngine {
     // OK
     public boolean compileSubroutineDec(String className) throws Exception {
         pushStack("<subroutineDec>");
-        if (compileKeyWord(KeyWord.CONSTRUCTOR, KeyWord.FUNCTION, KeyWord.METHOD) == null)
+        KeyWord keyword = compileKeyWord(KeyWord.CONSTRUCTOR, KeyWord.FUNCTION, KeyWord.METHOD);
+        if (keyword == null)
             return popStack();
         symbolTable.startSubroutine();
-        assert compileKeyWord(KeyWord.VOID) != null || compileType() != null;
+        boolean isVoidFunction = compileKeyWord(KeyWord.VOID) != null;
+        if (!isVoidFunction)
+            assert compileType() != null;
         String subroutineName = ensure(compileSubroutineName());
         assert compileSymbol("(") != null;
         assert compileParameterList();
         assert compileSymbol(")") != null;
-        assert compileSubroutineBody(className, subroutineName);
+        int varCount = symbolTable.varCount(SymbolKind.VAR);
+        switch (keyword) {
+            case CONSTRUCTOR:
+                vmwriter.writeFunction(className + "." + subroutineName, varCount);
+                // allocate new object
+                vmwriter.writePush(SegmentType.CONST, symbolTable.varCount(SymbolKind.FIELD));
+                vmwriter.writeCall("Memory.alloc", 1);
+                vmwriter.writePop(SegmentType.POINTER, 0); // set this
+                break;
+            case METHOD:
+                vmwriter.writeFunction(className + "." + subroutineName, varCount + 1); // self
+                vmwriter.writePush(SegmentType.ARG, 0); // this
+                vmwriter.writePop(SegmentType.POINTER, 0); // set this
+                break;
+            case FUNCTION:
+                vmwriter.writeFunction(className + "." + subroutineName, varCount);
+                break;
+            default:
+                assert false;
+        }
+
+        vmwriter.writeFunction(className + "." + subroutineName, varCount);
+        vmwriter.writePop(SegmentType.POINTER, 0); // POP THIS
+        assert compileSubroutineBody();
+        if (isVoidFunction) {
+            vmwriter.writePush(SegmentType.CONST, 0); // return 0 if void
+        }
         return pushStack("</subroutineDec>");
     }
 
@@ -183,6 +213,7 @@ public class CompliationEngine {
             return popStack();
         assert compileSubroutineCall();
         assert compileSymbol(";") != null;
+        vmwriter.writePop(SegmentType.TEMP, 0); // pop returned value
         return pushStack("</doStatement>");
     }
 
@@ -248,16 +279,17 @@ public class CompliationEngine {
         pushStack("<whileStatement>");
         if (compileKeyWord(KeyWord.WHILE) == null)
             return popStack();
-        vmwriter.writeLabel("TODO: while start");
+        String label = UUID.randomUUID().toString();
+        vmwriter.writeLabel(label + "-while-start");
         assert compileSymbol("(") != null;
         assert compileExpression();
         assert compileSymbol(")") != null;
-        vmwriter.writeIf("TODO: while end");
+        vmwriter.writeIf(label + "while-end");
         assert compileSymbol("{") != null;
         assert compileStatements();
         assert compileSymbol("}") != null;
-        vmwriter.writeGoto("TODO: while start");
-        vmwriter.writeLabel("TODO: while end");
+        vmwriter.writeGoto(label + "-while-start");
+        vmwriter.writeLabel(label + "-while-end");
         return pushStack("</whileStatement>");
     }
 
@@ -282,18 +314,19 @@ public class CompliationEngine {
         assert compileSymbol("(") != null;
         assert compileExpression();
         assert compileSymbol(")") != null;
-        vmwriter.writeIf("TODO: else label");
+        String label = UUID.randomUUID().toString();
+        vmwriter.writeIf(label + "-else");
         assert compileSymbol("{") != null;
         assert compileStatements();
         assert compileSymbol("}") != null;
-        vmwriter.writeGoto("TODO: end lable");
-        vmwriter.writeLabel("TODO: else label");
+        vmwriter.writeGoto(label + "-endif");
+        vmwriter.writeLabel(label + "-else");
         if (compileKeyWord(KeyWord.ELSE) != null) {
             assert compileSymbol("{") != null;
             assert compileStatements();
             assert compileSymbol("}") != null;
         }
-        vmwriter.writeLabel("TODO: end label");
+        vmwriter.writeLabel(label + "-endif");
         return pushStack("</ifStatement>");
     }
 
@@ -314,10 +347,10 @@ public class CompliationEngine {
                     vmwriter.writeArithmetic(CommandType.SUB);
                     break;
                 case "*":
-                    // TODO: call mult
+                    vmwriter.writeCall("Math.multiply", 2);
                     break;
                 case "/":
-                    // TODO: call div
+                    vmwriter.writeCall("Math.divide", 2);
                     break;
                 case "&":
                     vmwriter.writeArithmetic(CommandType.AND);
@@ -447,35 +480,54 @@ public class CompliationEngine {
         return compileLet() || compileIf() || compileWhile() || compileDo() || compileReturn();
     }
 
+    private SegmentType symbolKind2SegmentType(SymbolKind kind) {
+        switch (kind) {
+            case STATIC:
+                return SegmentType.STATIC;
+            case FIELD:
+                return SegmentType.THAT;
+            case ARG:
+                return SegmentType.ARG;
+            case VAR:
+                return SegmentType.LOCAL;
+            default:
+                assert false;
+        }
+        return null;
+    }
+
     // OK
     private boolean compileSubroutineCall() throws Exception {
         String name = compileIdentifier();
         if (name == null)
             return false; // subroutineName, className or varName
+        boolean pushSelf = false;
         if (compileSymbol(".") != null) {
             String subroutineName = ensure(compileSubroutineName()); // 1st identifier is className or varName
             if (symbolTable.contains(name)) {
+                SegmentType segment = symbolKind2SegmentType(symbolTable.kindOf(name));
+                vmwriter.writePush(segment, symbolTable.indexOf(name)); // self
+                pushSelf = true;
                 name = symbolTable.typeOf(name) + "." + subroutineName; // varName
             } else {
                 name = name + "." + subroutineName; // className
             }
         }
         assert compileSymbol("(") != null;
-        int nArgs = compileExpressionList();
+        int nArgs = compileExpressionList() + (pushSelf ? 1 : 0);
         assert compileSymbol(")") != null;
         vmwriter.writeCall(name, nArgs);
         return true;
     }
 
     // OK
-    private boolean compileSubroutineBody(String className, String subroutineName) throws Exception {
+    private boolean compileSubroutineBody() throws Exception {
         pushStack("<subroutineBody>");
         if (compileSymbol("{") == null)
             return popStack();
         while (tokenizer.tokenType() == TokenType.KEYWORD && tokenizer.keyWord() == KeyWord.VAR) {
             assert compileVarDec();
         }
-        vmwriter.writeFunction(className + "." + subroutineName, symbolTable.varCount(SymbolKind.VAR));
         compileStatements();
         assert compileSymbol("}") != null;
         return pushStack("</subroutineBody>");
@@ -581,7 +633,12 @@ public class CompliationEngine {
         if (tokenizer.tokenType() != TokenType.STRING_CONST)
             return false;
         String res = tokenizer.stringVal();
-        vmwriter.writePush(SegmentType.CONST, 0); // TODO: push address of string constant
+        vmwriter.writePush(SegmentType.CONST, res.length());
+        vmwriter.writeCall("String.new", 1);
+        for (char c : res.toCharArray()) {
+            vmwriter.writePush(SegmentType.CONST, c);
+            vmwriter.writeCall("String.appendChar", 2);
+        }
         pushStack("!<stringConstant> " + res + " </stringConstant>");
         tokenizer.advance();
         return true;
