@@ -1,8 +1,8 @@
 package src.compiler;
 
 public enum SegmentType {
-    CONST("CONST"), ARG("ARG"), LOCAL("LOCAL"), STATIC("STATIC"), THIS("THIS"), THAT("THAT"), POINTER("POINTER"),
-    TEMP("TEMP");
+    CONST("CONSTANT"), ARG("ARGUMENT"), LOCAL("LOCAL"), STATIC("STATIC"), THIS("THIS"), THAT("THAT"),
+    POINTER("POINTER"), TEMP("TEMP");
 
     private final String text;
 

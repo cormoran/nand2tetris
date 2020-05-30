@@ -18,4 +18,4 @@ for f in $(find . -name *.jack); do
     java -ea -classpath ../.. src.compiler.CompliationEngine $f > /dev/null || exit -1
     ../../tools/TextComparer.sh ${f/.jack/.xml} ${f/.jack/.gen.xml} || exit -1
 done
-echo "[OK] Tokenizer"
+echo "[OK] CompliationEngine"

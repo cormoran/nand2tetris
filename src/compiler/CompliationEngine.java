@@ -23,26 +23,31 @@ public class CompliationEngine {
 
     public static void main(String[] args) throws Exception {
         assert args.length == 1;
-        String outFileName = args[0].replace(".jack", ".gen.xml");
+        String outXmlFileName = args[0].replace(".jack", ".gen.xml");
+        String outVmFileName = args[0].replace(".jack", ".vm");
 
-        CompliationEngine engine = new CompliationEngine(new FileReader(args[0]), new FileWriter(outFileName));
+        CompliationEngine engine = new CompliationEngine(new FileReader(args[0]), new FileWriter(outVmFileName),
+                new FileWriter(outXmlFileName));
         engine.compileClass();
         engine.write();
     }
 
     Tokenizer tokenizer;
-    Writer out;
+    Writer outXml;
     ArrayList<String> buffer;
     SymbolTable symbolTable;
     VMWriter vmwriter;
+    int labelCount;
+    String className;
 
-    CompliationEngine(Reader in, Writer out) throws Exception {
+    CompliationEngine(Reader in, Writer outVm, Writer outXml) throws Exception {
         tokenizer = new Tokenizer(in);
         tokenizer.advance();
-        this.out = out;
+        this.labelCount = 0;
+        this.outXml = outXml;
         this.buffer = new ArrayList<String>();
         this.symbolTable = new SymbolTable();
-        this.vmwriter = new VMWriter();
+        this.vmwriter = new VMWriter(outVm);
     }
 
     private String getXml() {
@@ -65,10 +70,11 @@ public class CompliationEngine {
         return builder.toString();
     }
 
-    private void write() throws Exception {
+    public void write() throws Exception {
         String xml = getXml();
-        out.write(xml);
-        out.close();
+        outXml.write(xml);
+        outXml.close();
+        vmwriter.close();
     }
 
     private boolean pushStack(String key) {
@@ -92,7 +98,7 @@ public class CompliationEngine {
         pushStack("<class>");
         if (compileKeyWord(KeyWord.CLASS) == null)
             return popStack();
-        String className = ensure(compileIdentifier());
+        className = ensure(compileIdentifier());
         assert compileSymbol("{") != null;
 
         while (compileClassVarDec())
@@ -132,9 +138,20 @@ public class CompliationEngine {
         if (!isVoidFunction)
             assert compileType() != null;
         String subroutineName = ensure(compileSubroutineName());
+        if (keyword == KeyWord.METHOD) {
+            symbolTable.define("__self__", className, SymbolKind.ARG);
+        }
         assert compileSymbol("(") != null;
         assert compileParameterList();
         assert compileSymbol(")") != null;
+
+        pushStack("<subroutineBody>");
+        assert compileSymbol("{") != null;
+        while (tokenizer.tokenType() == TokenType.KEYWORD && tokenizer.keyWord() == KeyWord.VAR) {
+            assert compileVarDec();
+        }
+
+        // write function head
         int varCount = symbolTable.varCount(SymbolKind.VAR);
         switch (keyword) {
             case CONSTRUCTOR:
@@ -143,9 +160,13 @@ public class CompliationEngine {
                 vmwriter.writePush(SegmentType.CONST, symbolTable.varCount(SymbolKind.FIELD));
                 vmwriter.writeCall("Memory.alloc", 1);
                 vmwriter.writePop(SegmentType.POINTER, 0); // set this
+                for (int i = 0; i < symbolTable.varCount(SymbolKind.FIELD); i++) {
+                    vmwriter.writePush(SegmentType.CONST, 0);
+                    vmwriter.writePop(SegmentType.THIS, i);
+                }
                 break;
             case METHOD:
-                vmwriter.writeFunction(className + "." + subroutineName, varCount + 1); // self
+                vmwriter.writeFunction(className + "." + subroutineName, varCount);
                 vmwriter.writePush(SegmentType.ARG, 0); // this
                 vmwriter.writePop(SegmentType.POINTER, 0); // set this
                 break;
@@ -155,13 +176,20 @@ public class CompliationEngine {
             default:
                 assert false;
         }
-
-        vmwriter.writeFunction(className + "." + subroutineName, varCount);
-        vmwriter.writePop(SegmentType.POINTER, 0); // POP THIS
-        assert compileSubroutineBody();
-        if (isVoidFunction) {
-            vmwriter.writePush(SegmentType.CONST, 0); // return 0 if void
+        //
+        for (int i = 0; i < varCount; i++) {
+            vmwriter.writePush(SegmentType.CONST, 0);
+            vmwriter.writePop(SegmentType.LOCAL, i);
         }
+
+        compileStatements();
+        assert compileSymbol("}") != null;
+        pushStack("</subroutineBody>");
+
+        // implemented in return
+        // if (isVoidFunction) {
+        // vmwriter.writePush(SegmentType.CONST, 0); // return 0 if void
+        // }
         return pushStack("</subroutineDec>");
     }
 
@@ -234,42 +262,17 @@ public class CompliationEngine {
         assert compileSymbol(";") != null;
 
         if (isArray) {
-            switch (symbolTable.kindOf(varName)) {
-                case STATIC:
-                    vmwriter.writePush(SegmentType.STATIC, symbolTable.indexOf(varName));
-                    break;
-                case FIELD:
-                    vmwriter.writePush(SegmentType.THIS, symbolTable.indexOf(varName));
-                    break;
-                case ARG:
-                    assert false;
-                    break;
-                case VAR:
-                    vmwriter.writePush(SegmentType.LOCAL, symbolTable.indexOf(varName));
-                    break;
-                default:
-                    assert false;
-            }
+            SegmentType segmentType = symbolKind2SegmentType(symbolTable.kindOf(varName));
+            vmwriter.writePop(SegmentType.TEMP, 0); // res
+            vmwriter.writePush(segmentType, symbolTable.indexOf(varName));
             vmwriter.writeArithmetic(CommandType.ADD); // base + index
             vmwriter.writePop(SegmentType.POINTER, 1); // set that
+            vmwriter.writePush(SegmentType.TEMP, 0); // res
             vmwriter.writePop(SegmentType.THAT, 0);
         } else {
-            switch (symbolTable.kindOf(varName)) {
-                case STATIC:
-                    vmwriter.writePop(SegmentType.STATIC, symbolTable.indexOf(varName));
-                    break;
-                case FIELD:
-                    vmwriter.writePop(SegmentType.THIS, symbolTable.indexOf(varName));
-                    break;
-                case ARG:
-                    assert false;
-                    break;
-                case VAR:
-                    vmwriter.writePop(SegmentType.LOCAL, symbolTable.indexOf(varName));
-                    break;
-                default:
-                    assert false;
-            }
+            SymbolKind kind = symbolTable.kindOf(varName);
+            SegmentType segmentType = symbolKind2SegmentType(kind);
+            vmwriter.writePop(segmentType, symbolTable.indexOf(varName));
         }
         return pushStack("</letStatement>");
     }
@@ -279,17 +282,18 @@ public class CompliationEngine {
         pushStack("<whileStatement>");
         if (compileKeyWord(KeyWord.WHILE) == null)
             return popStack();
-        String label = UUID.randomUUID().toString();
-        vmwriter.writeLabel(label + "-while-start");
+        String label = getNewLabel();
+        vmwriter.writeLabel(label + ".while.start");
         assert compileSymbol("(") != null;
         assert compileExpression();
         assert compileSymbol(")") != null;
-        vmwriter.writeIf(label + "while-end");
+        vmwriter.writeArithmetic(CommandType.NOT);
+        vmwriter.writeIf(label + ".while.end");
         assert compileSymbol("{") != null;
         assert compileStatements();
         assert compileSymbol("}") != null;
-        vmwriter.writeGoto(label + "-while-start");
-        vmwriter.writeLabel(label + "-while-end");
+        vmwriter.writeGoto(label + ".while.start");
+        vmwriter.writeLabel(label + ".while.end");
         return pushStack("</whileStatement>");
     }
 
@@ -314,19 +318,20 @@ public class CompliationEngine {
         assert compileSymbol("(") != null;
         assert compileExpression();
         assert compileSymbol(")") != null;
-        String label = UUID.randomUUID().toString();
-        vmwriter.writeIf(label + "-else");
+        String label = getNewLabel();
+        vmwriter.writeArithmetic(CommandType.NOT);
+        vmwriter.writeIf(label + ".else");
         assert compileSymbol("{") != null;
         assert compileStatements();
         assert compileSymbol("}") != null;
-        vmwriter.writeGoto(label + "-endif");
-        vmwriter.writeLabel(label + "-else");
+        vmwriter.writeGoto(label + ".endif");
+        vmwriter.writeLabel(label + ".else");
         if (compileKeyWord(KeyWord.ELSE) != null) {
             assert compileSymbol("{") != null;
             assert compileStatements();
             assert compileSymbol("}") != null;
         }
-        vmwriter.writeLabel(label + "-endif");
+        vmwriter.writeLabel(label + ".endif");
         return pushStack("</ifStatement>");
     }
 
@@ -423,32 +428,34 @@ public class CompliationEngine {
                     assert compileExpression();
                     assert compileSymbol("]") != null;
 
-                    SegmentType segment = ensure(symbolTable.kindOf(name) == SymbolKind.ARG ? SegmentType.ARG
-                            : symbolTable.kindOf(name) == SymbolKind.FIELD ? SegmentType.THIS
-                                    : symbolTable.kindOf(name) == SymbolKind.STATIC ? SegmentType.STATIC
-                                            : symbolTable.kindOf(name) == SymbolKind.VAR ? SegmentType.LOCAL : null);
+                    SegmentType segment = symbolKind2SegmentType(symbolTable.kindOf(name));
                     vmwriter.writePush(segment, symbolTable.indexOf(name));
                     vmwriter.writeArithmetic(CommandType.ADD);
                     vmwriter.writePop(SegmentType.POINTER, 1);
                     vmwriter.writePush(SegmentType.THAT, 0);
                 } else if (compileSymbol("(") != null) { // 3
+                    vmwriter.writePush(SegmentType.POINTER, 0); // this
                     int nArgs = compileExpressionList();
                     assert compileSymbol(")") != null;
-                    vmwriter.writeCall(name, nArgs);
+                    vmwriter.writeCall(className + "." + name, nArgs + 1);
                 } else if (compileSymbol(".") != null) { // 4
                     String name2 = ensure(compileIdentifier()); // subroutineName
-                    assert compileSymbol("(") != null;
-                    int nArgs = compileExpressionList();
-                    assert compileSymbol(")") != null;
-                    if (symbolTable.contains(name))
-                        vmwriter.writeCall(symbolTable.typeOf(name) + "." + name2, nArgs); // varName
-                    else
-                        vmwriter.writeCall(name + "." + name2, nArgs); // className
+                    if (symbolTable.contains(name)) {
+                        SegmentType segment = symbolKind2SegmentType(symbolTable.kindOf(name));
+                        vmwriter.writePush(segment, symbolTable.indexOf(name)); // self
+                        assert compileSymbol("(") != null;
+                        int nArgs = compileExpressionList();
+                        assert compileSymbol(")") != null;
+                        vmwriter.writeCall(symbolTable.typeOf(name) + "." + name2, nArgs + 1); // varName method
+                    } else {
+                        assert compileSymbol("(") != null;
+                        int nArgs = compileExpressionList();
+                        assert compileSymbol(")") != null;
+                        vmwriter.writeCall(name + "." + name2, nArgs); // className function
+                    }
+
                 } else {
-                    SegmentType segment = ensure(symbolTable.kindOf(name) == SymbolKind.ARG ? SegmentType.ARG
-                            : symbolTable.kindOf(name) == SymbolKind.FIELD ? SegmentType.THIS
-                                    : symbolTable.kindOf(name) == SymbolKind.STATIC ? SegmentType.STATIC
-                                            : symbolTable.kindOf(name) == SymbolKind.VAR ? SegmentType.LOCAL : null);
+                    SegmentType segment = symbolKind2SegmentType(symbolTable.kindOf(name));
                     vmwriter.writePush(segment, symbolTable.indexOf(name));
                     // 1
                 }
@@ -485,7 +492,7 @@ public class CompliationEngine {
             case STATIC:
                 return SegmentType.STATIC;
             case FIELD:
-                return SegmentType.THAT;
+                return SegmentType.THIS;
             case ARG:
                 return SegmentType.ARG;
             case VAR:
@@ -512,6 +519,10 @@ public class CompliationEngine {
             } else {
                 name = name + "." + subroutineName; // className
             }
+        } else {
+            name = className + "." + name;
+            vmwriter.writePush(SegmentType.POINTER, 0); // this
+            pushSelf = true;
         }
         assert compileSymbol("(") != null;
         int nArgs = compileExpressionList() + (pushSelf ? 1 : 0);
@@ -576,7 +587,7 @@ public class CompliationEngine {
                 vmwriter.writePush(SegmentType.CONST, 0);
                 break;
             case THIS:
-                vmwriter.writePush(SegmentType.POINTER, 0); // TODO: あってる？
+                vmwriter.writePush(SegmentType.POINTER, 0);
                 break;
             default:
                 assert false;
@@ -642,5 +653,9 @@ public class CompliationEngine {
         pushStack("!<stringConstant> " + res + " </stringConstant>");
         tokenizer.advance();
         return true;
+    }
+
+    private String getNewLabel() {
+        return "label" + this.labelCount++;
     }
 }

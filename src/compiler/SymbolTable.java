@@ -1,78 +1,98 @@
 package src.compiler;
 
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
+import java.util.stream.Stream;
 
 public class SymbolTable {
-    private HashMap<String, SymbolInfoObject> classSymbolTable, subroutineSymbolTable;
-    private HashMap<SymbolKind, Integer> classVarCount, subroutineVarCount;
-    private int classIndex, subroutineIndex;
+    private HashMap<SymbolKind, HashMap<String, SymbolInfoObject>> symbolTable;
+    private HashMap<SymbolKind, Integer> varIndex;
+
+    private final Set<SymbolKind> functionScopeSymbolKinds = new HashSet<SymbolKind>(
+            Arrays.asList(SymbolKind.ARG, SymbolKind.VAR));
+    private final Set<SymbolKind> classScopeSymbolKinds = new HashSet<SymbolKind>(
+            Arrays.asList(SymbolKind.STATIC, SymbolKind.FIELD));
+    private final List<SymbolKind> allSymbolKinds = Arrays.asList(SymbolKind.ARG, SymbolKind.VAR, SymbolKind.STATIC,
+            SymbolKind.FIELD); // order: function scope -> class scope
 
     SymbolTable() {
-        classSymbolTable = new HashMap<>();
-        subroutineSymbolTable = new HashMap<>();
-        classVarCount = new HashMap<>();
-        subroutineVarCount = new HashMap<>();
-        classIndex = 0;
-        subroutineIndex = 0;
-    }
-
-    public void startSubroutine() {
-        subroutineSymbolTable = new HashMap<>();
-        subroutineVarCount = new HashMap<>();
-        subroutineIndex = 0;
-    }
-
-    public void define(String name, String type, SymbolKind kind) throws Exception {
-        switch (kind) {
-            case STATIC:
-            case FIELD:
-                if (classSymbolTable.containsKey(name))
-                    throw new Exception(name + " is already defined in current class scope");
-                classSymbolTable.put(name, new SymbolInfoObject(classIndex++, type, kind));
-                classVarCount.put(kind, classVarCount.getOrDefault(kind, 0) + 1);
-                break;
-            case ARG:
-            case VAR:
-                if (subroutineSymbolTable.containsKey(name))
-                    throw new Exception(name + " is already defined in current subroutine scope");
-                subroutineSymbolTable.put(name, new SymbolInfoObject(subroutineIndex++, type, kind));
-                subroutineVarCount.put(kind, subroutineVarCount.getOrDefault(kind, 0) + 1);
-                break;
-            default:
-                throw new Exception("unknown kind " + kind.toString());
+        symbolTable = new HashMap<>();
+        varIndex = new HashMap<>();
+        for (SymbolKind kind : allSymbolKinds) {
+            symbolTable.put(kind, new HashMap<>());
+            varIndex.put(kind, 0);
         }
     }
 
+    public void startSubroutine() {
+        for (SymbolKind i : functionScopeSymbolKinds) {
+            symbolTable.put(i, new HashMap<>());
+            varIndex.put(i, 0);
+        }
+    }
+
+    public void define(String name, String type, SymbolKind kind) throws Exception {
+        HashMap<String, SymbolInfoObject> table = symbolTable.get(kind);
+        Integer index = varIndex.get(kind);
+        if (functionScopeSymbolKinds.contains(kind)) {
+            for (SymbolKind k : functionScopeSymbolKinds) {
+                if (symbolTable.get(k).containsKey(name)) {
+                    throw new Exception(name + " is already defined");
+                }
+            }
+        }
+        if (classScopeSymbolKinds.contains(kind)) {
+            for (SymbolKind k : classScopeSymbolKinds) {
+                if (symbolTable.get(k).containsKey(name)) {
+                    throw new Exception(name + " is already defined");
+                }
+            }
+        }
+        table.put(name, new SymbolInfoObject(index, type, kind));
+        varIndex.put(kind, index + 1);
+    }
+
     public int varCount(SymbolKind kind) {
-        return subroutineVarCount.getOrDefault(kind, 0) + classVarCount.getOrDefault(kind, 0);
+        return varIndex.get(kind);
     }
 
     public SymbolKind kindOf(String name) throws Exception {
-        if (subroutineSymbolTable.containsKey(name))
-            return subroutineSymbolTable.get(name).kind;
-        if (classSymbolTable.containsKey(name))
-            return classSymbolTable.get(name).kind;
+        for (SymbolKind i : allSymbolKinds) {
+            if (symbolTable.get(i).containsKey(name))
+                return i;
+        }
         throw new Exception("unknown symbol " + name);
     }
 
     public String typeOf(String name) throws Exception {
-        if (subroutineSymbolTable.containsKey(name))
-            return subroutineSymbolTable.get(name).type;
-        if (classSymbolTable.containsKey(name))
-            return classSymbolTable.get(name).type;
+        for (SymbolKind i : allSymbolKinds) {
+            if (symbolTable.get(i).containsKey(name)) {
+                return symbolTable.get(i).get(name).type;
+            }
+        }
         throw new Exception("unknown symbol " + name);
     }
 
     public int indexOf(String name) throws Exception {
-        if (subroutineSymbolTable.containsKey(name))
-            return subroutineSymbolTable.get(name).index;
-        if (classSymbolTable.containsKey(name))
-            return classSymbolTable.get(name).index;
+        for (SymbolKind i : allSymbolKinds) {
+            if (symbolTable.get(i).containsKey(name)) {
+                return symbolTable.get(i).get(name).index;
+            }
+        }
         throw new Exception("unknown symbol " + name);
     }
 
     public boolean contains(String name) {
-        return subroutineSymbolTable.containsKey(name) || classSymbolTable.containsKey(name);
+        for (SymbolKind i : allSymbolKinds) {
+            if (symbolTable.get(i).containsKey(name)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     class SymbolInfoObject {
